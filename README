@@ -4,3 +4,43 @@ $ git add README
 $ git commit -m 'first commit'
 $ git remote add origin http://github.com/kazuyuki/mirror-memory.git
 $ git push -u origin master
+
+■ミラーメモリ
+masterノード slaveノードにそれぞれ、main、bkup の2枚の領域を持ち、
+slaveノードの初期化/復旧処理は、masterノードの bkupを使う。
+
+■master→slave転送
+=通常時
+	sync	各TXに対して、master/slaveへの適用完了を待つ。
+	async	各TXに対して、master適用/slave へ TX の send() 完了を待つ。
+
+=復旧/初期化時
+	復旧処理開始。
+		更新TXを保存するQueueを確保。以降の更新TXは
+			master-main へは即適用。
+			master-bkup へは復旧完了まで、Queue に push。
+		slave に master-bkup を転送する。
+		master の Queue が空になるまで pop → master-bkup, slave-main,bkup へ適用を繰り返す。
+		途中でエラーが発生したら、
+			master-bkup に Queue の内容を全適用。
+				そこでエラーが発生したら bkup を破棄して再構築。
+				masterの bkup 再構築は sqlite の backup機構を用いる。
+	復旧処理完了。
+		Queueを開放。
+
+■CONS
+	1byteのデータを格納するために、2byteのメモリを消費する。(容量倍増)
+	1byteのデータ更新TXに対して、2byteのデータ更新が必要になる。(性能半減)
+	Queueへの push量 > pop量 = sync? (NW転送量 + slaveノードでの適応量) : (NW転送量)
+	の場合、復旧処理が終わらない。
+	slaveのmaster昇格に対する考慮が必要。
+
+■PROS
+	master-main で稼動状態を維持しつつ、slave の復旧処理が行える。
+	そうは言っても、オンメモリでデータ同期が可能になる。
+	「容量倍増」は富豪的プログラミングでは問題にならない。
+	「性能半減」は他のメモリミラーとの性能比較や業務要件次第では問題にならないかもしれない。
+
+■TBD
+	複数 slave を考慮したい。
+		複数slaveの同時復旧に対する考慮が必要。(リニアに時間を消費してよいなら簡単だが)
